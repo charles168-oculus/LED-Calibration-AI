@@ -110,8 +110,12 @@ with tab2:
                         out_df = pd.DataFrame()
                         
                         # Try to preserve SN if they exist in the uploaded file
-                        out_df['Hip SN'] = input_df['Hip SN'] if 'Hip SN' in input_df.columns else input_df.get('FF SN', '')
-                        out_df['GTK SN'] = input_df['GTK SN'] if 'GTK SN' in input_df.columns else input_df.get('SF SN', '')
+                        # 自动寻找可能的 SN 列名
+                        possible_sn_cols = ['SerialNumber', 'SN', 'Hip SN', 'FF SN', 'Serial Number']
+                        hip_sn_col = next((col for col in possible_sn_cols if col in input_df.columns), None)
+
+                        out_df['Hip SN'] = input_df[hip_sn_col] if hip_sn_col else 'Unknown_SN'
+                        out_df['GTK SN'] = input_df['GTK SN'] if 'GTK SN' in input_df.columns else ''
                         
                         # Fill original Hip data
                         out_df['lv-R'] = input_df['lv-R']
