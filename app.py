@@ -105,75 +105,91 @@ with tab2:
 
     if uploaded_file is not None:
         try:
+            # 1. 自动识别文件格式并加载
             if uploaded_file.name.endswith('.csv'):
                 input_df = pd.read_csv(uploaded_file)
             else:
                 input_df = pd.read_excel(uploaded_file)
-                
-            required_cols = ['lv-R', 'lv-G', 'lv-B', 'lv-W']
-            missing_cols = [col for col in required_cols if col not in input_df.columns]
             
-            if missing_cols:
-                st.error(f"Missing required columns: {', '.join(missing_cols)}")
-            else:
-                st.write("Data loaded successfully! Preview:")
-                st.dataframe(input_df.head())
-                
-                if st.button("🚀 Start Batch Prediction", key="batch_predict"):
-                    with st.spinner('AI is predicting...'):
-                        # 转换并预测
-                        X_predict = engineer_features(input_df)
-                        predictions = model.predict(X_predict)
-                        
-                       # 【修复 Bug 3】：初始化时锁定行数，彻底解决列数不够时的崩溃问题
-                        out_df = pd.DataFrame(index=input_df.index) 
+            # 2. 强力清洗数据：去除全空行，防止索引干扰
+            input_df = input_df.dropna(how='all').reset_index(drop=True)
 
-                       # 提取前框 SN，如果没有就填 Unknown_SN
-                        possible_hip_sn = ['SerialNumber', 'SN', 'Hip SN', 'FF SN', 'Serial Number', '前框SN']
-                        hip_col = next((c for c in possible_hip_sn if c in input_df.columns), None)
-                        out_df['Hip SN'] = input_df[hip_col] if hip_col else 'Unknown_SN'
+            # 3. 模糊匹配核心列 (解决 lv-R 还是 RValue 的问题)
+            # 定义搜索映射：将你模型需要的标准名 映射到 可能出现的各种列名
+            mapping = {
+                'lv-R': ['lv-R', 'RValue', 'R_Value', 'lv_r'],
+                'lv-G': ['lv-G', 'GValue', 'G_Value', 'lv_g'],
+                'lv-B': ['lv-B', 'BValue', 'B_Value', 'lv_b'],
+                'lv-W': ['lv-W', 'WValue', 'W_Value', 'lv_w']
+            }
+            
+            # 自动寻找存在的列
+            found_cols = {}
+            for target, candidates in mapping.items():
+                for c in candidates:
+                    if c in input_df.columns:
+                        found_cols[target] = c
+                        break
+            
+            # 检查是否找全了 4 个亮度指标
+            if len(found_cols) < 4:
+                st.error(f"Missing brightness data. Need: lv-R, lv-G, lv-B, lv-W. Found: {list(found_cols.keys())}")
+                st.stop()
+            
+            # 4. 预测与导出逻辑
+            if st.button("🚀 Start Batch Prediction", key="batch_predict"):
+                with st.spinner('AI is predicting...'):
+                    # 准备预测专用的输入 (严格按照模型需要的 4 列提取)
+                    predict_input = pd.DataFrame({
+                        'lv-R': input_df[found_cols['lv-R']],
+                        'lv-G': input_df[found_cols['lv-G']],
+                        'lv-B': input_df[found_cols['lv-B']],
+                        'lv-W': input_df[found_cols['lv-W']]
+                    })
+                    
+                    # 运行特征工程和预测
+                    X_predict = engineer_features(predict_input)
+                    predictions = model.predict(X_predict)
+                    
+                    # 【核心修复】：构建输出表，强制对齐索引
+                    out_df = pd.DataFrame(index=input_df.index) 
 
-                        # 预测时根本不需要 GTK 数据，强制全部留空
-                        out_df['GTK SN'] = ''
-                        
-                        out_df['lv-R'] = input_df['lv-R']
-                        out_df['lv-G'] = input_df['lv-G']
-                        out_df['lv-B'] = input_df['lv-B']
-                        out_df['lv-W'] = input_df['lv-W']
-                        
-                        out_df['mix_W_2000_r_ratio_current'] = predictions[:, 0]
-                        out_df['mix_W_2000_g_ratio_current'] = predictions[:, 1]
-                        out_df['mix_W_2000_b_ratio_current'] = predictions[:, 2]
-                        out_df['w_4000_current'] = predictions[:, 3]
-                        
-                        st.success("✅ Prediction complete!")
-                        st.dataframe(out_df.head())
-                        
-                        # 生成可下载的 Excel
-                        wb = Workbook()
-                        ws = wb.active
-                        ws.title = "Predict_data"
-                        
-                        ws.append(["Hip SN", "GTK SN", "hip test data", "", "", "", "gtk test data", "", "", ""])
-                        ws.merge_cells(start_row=1, start_column=3, end_row=1, end_column=6)
-                        ws.merge_cells(start_row=1, start_column=7, end_row=1, end_column=10)
-                        
-                        for col in [1, 2, 3, 7]:
-                            ws.cell(row=1, column=col).alignment = Alignment(horizontal='center')
-                        
-                        ws.append(list(out_df.columns))
-                        for row in dataframe_to_rows(out_df, index=False, header=False):
-                            ws.append(row)
-                            
-                        excel_data = io.BytesIO()
-                        wb.save(excel_data)
-                        excel_data.seek(0)
-                        
-                        st.download_button(
-                            label="📥 Download Predict_data.xlsx",
-                            data=excel_data,
-                            file_name="Predict_data.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                        )
+                    # 提取 SN (容错逻辑)
+                    sn_candidates = ['SerialNumber', 'SN', 'Hip SN', 'FF SN', 'Serial Number', '前框SN']
+                    hip_col = next((c for c in sn_candidates if c in input_df.columns), None)
+                    out_df['Hip SN'] = input_df[hip_col] if hip_col else 'Unknown_SN'
+                    out_df['GTK SN'] = '' # 预测阶段 GTK 为空
+                    
+                    # 将预测结果填入
+                    out_df['predict_w_4000_current'] = predictions[:, 3] # 对应你 y 的第 4 列
+                    out_df['predict_mix_W_2000_r'] = predictions[:, 0]
+                    out_df['predict_mix_W_2000_g'] = predictions[:, 1]
+                    out_df['predict_mix_W_2000_b'] = predictions[:, 2]
+                    
+                    # 补充原始数据方便核对
+                    out_df['lv-R'] = predict_input['lv-R']
+                    out_df['lv-G'] = predict_input['lv-G']
+                    out_df['lv-B'] = predict_input['lv-B']
+                    out_df['lv-W'] = predict_input['lv-W']
+                    
+                    st.success("✅ Batch prediction finished!")
+                    st.dataframe(out_df.head())
+                    
+                    # 5. 生成 Excel (带样式的导出逻辑)
+                    wb = Workbook()
+                    ws = wb.active
+                    ws.title = "AI_Prediction_Result"
+                    # 添加双行表头
+                    ws.append(["SN Info", "", "Predicted GTK Target Current (mA)", "", "", "", "Original Hip Data", "", "", ""])
+                    ws.append(list(out_df.columns))
+                    for r in dataframe_to_rows(out_df, index=False, header=False):
+                        ws.append(r)
+                    
+                    # 导出
+                    excel_data = io.BytesIO()
+                    wb.save(excel_data)
+                    st.download_button("📥 Download Excel Report", excel_data.getvalue(), 
+                                       "Predict_Result.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
         except Exception as e:
-            st.error(f"Error processing file: {e}")
+            st.error(f"Runtime Error: {str(e)}")
