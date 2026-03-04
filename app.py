@@ -14,7 +14,7 @@ from openpyxl.styles import Alignment
 # 1. 页面配置
 # ==========================================
 st.set_page_config(page_title="AI Predictor: Hip to GTK V2", layout="wide")
-st.title("💡 Hip to GTK Calibration AI Predictor (V2.5)")
+st.title("💡 Hip to GTK Calibration AI Predictor (V2.6)")
 st.markdown("Enhanced with Ratio-Features and Gradient Boosting to break prediction ceilings.")
 
 # ==========================================
