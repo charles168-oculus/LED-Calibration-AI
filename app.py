@@ -125,16 +125,16 @@ with tab2:
                         X_predict = engineer_features(input_df)
                         predictions = model.predict(X_predict)
                         
-                        out_df = pd.DataFrame()
-                        
-                        # 【修复 Bug 1】：超级聪明的 SN 提取逻辑，涵盖几乎所有叫法
+                       # 【修复 Bug 3】：初始化时锁定行数，彻底解决列数不够时的崩溃问题
+                        out_df = pd.DataFrame(index=input_df.index) 
+
+                       # 提取前框 SN，如果没有就填 Unknown_SN
                         possible_hip_sn = ['SerialNumber', 'SN', 'Hip SN', 'FF SN', 'Serial Number', '前框SN']
                         hip_col = next((c for c in possible_hip_sn if c in input_df.columns), None)
-                        possible_gtk_sn = ['GTK SN', 'SF SN', '整机SN']
-                        gtk_col = next((c for c in possible_gtk_sn if c in input_df.columns), None)
-                        
                         out_df['Hip SN'] = input_df[hip_col] if hip_col else 'Unknown_SN'
-                        out_df['GTK SN'] = input_df[gtk_col] if gtk_col else ''
+
+                        # 预测时根本不需要 GTK 数据，强制全部留空
+                        out_df['GTK SN'] = ''
                         
                         out_df['lv-R'] = input_df['lv-R']
                         out_df['lv-G'] = input_df['lv-G']
