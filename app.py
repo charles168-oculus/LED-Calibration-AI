@@ -84,7 +84,7 @@ def load_and_train_model(filepath, _last_modified_time):
 # ==========================================
 # 4. Sidebar: Training Data Management
 # ==========================================
-DEFAULT_TRAIN_FILE = "Training_Data (1).csv"
+DEFAULT_TRAIN_FILE = "Training_Data.csv"
 CUSTOM_TRAIN_FILE = "Custom_Training_Data.csv"
 
 st.sidebar.title("⚙️ AI Core Settings")
@@ -102,7 +102,7 @@ else:
     if os.path.exists(DEFAULT_TRAIN_FILE):
         st.sidebar.info("ℹ️ Status: Using **Default EVT Training Data**")
     else:
-        st.sidebar.error("❌ Cannot find 'Training_Data (1).csv'. Please ensure it's in your GitHub repo.")
+        st.sidebar.error("❌ Cannot find 'Training_Data.csv'. Please ensure it's in your GitHub repo.")
         st.stop()
 
 st.sidebar.markdown("Upload new batch data here to overwrite AI memory and retrain.")
