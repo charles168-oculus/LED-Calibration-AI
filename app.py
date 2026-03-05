@@ -15,7 +15,7 @@ warnings.filterwarnings('ignore')
 # 1. 页面配置
 # ==========================================
 st.set_page_config(page_title="AI Predictor: Hip to GTK V3.4", layout="wide")
-st.title("💡 Hip to GTK Calibration AI Predictor (V3.0)")
+st.title("💡 Hip to GTK Calibration AI Predictor (V3.4)")
 st.markdown("### 🛡️ Bulletproof Edition: Auto Multi-Sheet Scan & Dirty Data Cleaning")
 
 # ==========================================
@@ -65,7 +65,7 @@ def engineer_features(df):
 def load_and_train_model():
     try:
         # 注意：这里读取的是你之前上传的 EVT 老数据作为基础大脑
-        df = pd.read_csv("Training_Data (1).csv")
+        df = pd.read_csv("Training_Data.csv")
         targets = ['mix_W_2000_r_ratio_current', 'mix_W_2000_g_ratio_current', 
                    'mix_W_2000_b_ratio_current', 'w_4000_current']
         df = df.dropna(subset=targets).reset_index(drop=True)
