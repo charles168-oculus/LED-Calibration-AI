@@ -2,27 +2,24 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import io
+import os
 from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.multioutput import MultiOutputRegressor
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
-from openpyxl import Workbook
-from openpyxl.utils.dataframe import dataframe_to_rows
 import warnings
 warnings.filterwarnings('ignore')
 
 # ==========================================
-# 1. 页面配置
+# 1. Page Configuration
 # ==========================================
-st.set_page_config(page_title="AI Predictor: Hip to GTK V3.4", layout="wide")
-st.title("💡 Hip to GTK Calibration AI Predictor (V3.4)")
-st.markdown("### 🛡️ Bulletproof Edition: Auto Multi-Sheet Scan & Dirty Data Cleaning")
+st.set_page_config(page_title="AI Predictor: Hip to GTK V3.2", layout="wide")
 
 # ==========================================
-# 2. 核心特征工程与清洗逻辑
+# 2. Core Feature Engineering & Cleaning
 # ==========================================
 def engineer_features(df):
-    """提取核心4列，强制转换为数字，并计算光学比例"""
+    """Extract 4 core columns, force numeric conversion, and calculate optical ratios"""
     mapping = {
         'lv-R': ['lv-R', 'RValue', 'R_Value', 'R-Value', 'LightRed_lv', 'lv-LightRed', 'lv_R'],
         'lv-G': ['lv-G', 'GValue', 'G_Value', 'G-Value', 'LightGreen_lv', 'lv-LightGreen', 'lv_G'],
@@ -31,23 +28,20 @@ def engineer_features(df):
     }
     
     clean_df = pd.DataFrame(index=df.index)
-    found_cols = {}
     
     for standard_name, candidates in mapping.items():
         found_col = next((c for c in candidates if c in df.columns), None)
         if found_col:
-            found_cols[standard_name] = found_col
-            # 强制转为数字，遇到 "Upper Limit" 这种文本直接变成 NaN
             clean_df[standard_name] = pd.to_numeric(df[found_col], errors='coerce')
         else:
-            raise ValueError(f"❌ 找不到必须的亮度列: {standard_name} (请检查表头命名)")
+            raise ValueError(f"❌ Missing required brightness column: {standard_name}")
 
-    # 剔除因为文本转换失败而产生的 NaN 行（例如 Upper Limit 行）
+    # Drop dirty data (e.g., rows containing text like "Upper Limit")
     valid_mask = clean_df.notna().all(axis=1)
     clean_df = clean_df[valid_mask].copy()
     
     if len(clean_df) == 0:
-        raise ValueError("❌ 清洗后没有找到任何有效的数字测试数据！")
+        raise ValueError("❌ No valid numeric data found after cleaning!")
 
     X = clean_df.copy()
     w_safe = X['lv-W'].replace(0, 1e-5)
@@ -59,117 +53,188 @@ def engineer_features(df):
     return X, valid_mask
 
 # ==========================================
-# 3. 模型训练 (带缓存)
+# 3. Dynamic Model Training
 # ==========================================
 @st.cache_resource
-def load_and_train_model():
+def load_and_train_model(filepath, _last_modified_time):
     try:
-        # 注意：这里读取的是你之前上传的 EVT 老数据作为基础大脑
-        df = pd.read_csv("Training_Data.csv")
+        df = pd.read_csv(filepath, low_memory=False)
         targets = ['mix_W_2000_r_ratio_current', 'mix_W_2000_g_ratio_current', 
                    'mix_W_2000_b_ratio_current', 'w_4000_current']
+        
+        missing_targets = [t for t in targets if t not in df.columns]
+        if missing_targets:
+            raise ValueError(f"Training data is missing target columns: {missing_targets}")
+            
         df = df.dropna(subset=targets).reset_index(drop=True)
         
         X_train, _ = engineer_features(df)
         y_train = df[targets]
         
-        # 使用综合表现最稳的 Gradient Boosting
         base_model = GradientBoostingRegressor(n_estimators=150, learning_rate=0.1, random_state=42)
         model = Pipeline([
             ('scaler', StandardScaler()),
             ('regressor', MultiOutputRegressor(base_model))
         ])
         model.fit(X_train, y_train)
-        return model, True
+        return model, len(df), True
     except Exception as e:
-        st.error(f"⚠️ Model Training Failed: {e}")
-        return None, False
-
-model, success = load_and_train_model()
-if not success: st.stop()
+        return None, 0, str(e)
 
 # ==========================================
-# 4. 强大的多 Sheet 文件读取引擎
+# 4. Sidebar: Training Data Management
 # ==========================================
+DEFAULT_TRAIN_FILE = "Training_Data (1).csv"
+CUSTOM_TRAIN_FILE = "Custom_Training_Data.csv"
+
+st.sidebar.title("⚙️ AI Core Settings")
+st.sidebar.markdown("---")
+st.sidebar.subheader("📥 Training Data Management")
+
+if os.path.exists(CUSTOM_TRAIN_FILE):
+    active_file = CUSTOM_TRAIN_FILE
+    st.sidebar.success("✅ Status: Using **Custom Training Data**")
+    if st.sidebar.button("🗑️ Restore Default EVT Training Data"):
+        os.remove(CUSTOM_TRAIN_FILE)
+        st.rerun() 
+else:
+    active_file = DEFAULT_TRAIN_FILE
+    if os.path.exists(DEFAULT_TRAIN_FILE):
+        st.sidebar.info("ℹ️ Status: Using **Default EVT Training Data**")
+    else:
+        st.sidebar.error("❌ Cannot find 'Training_Data (1).csv'. Please ensure it's in your GitHub repo.")
+        st.stop()
+
+st.sidebar.markdown("Upload new batch data here to overwrite AI memory and retrain.")
+uploaded_train = st.sidebar.file_uploader("Upload New Training Data (CSV/Excel)", type=['csv', 'xlsx'])
+
+if uploaded_train is not None:
+    try:
+        with st.spinner("💾 Saving new training data to server..."):
+            if uploaded_train.name.endswith('.csv'):
+                new_train_df = pd.read_csv(uploaded_train)
+            else:
+                new_train_df = pd.read_excel(uploaded_train)
+            
+            new_train_df.to_csv(CUSTOM_TRAIN_FILE, index=False)
+            st.sidebar.success("🎉 Data overwritten successfully! Refreshing AI Brain...")
+            st.rerun()
+    except Exception as e:
+        st.sidebar.error(f"Failed to save: {e}")
+
+file_mtime = os.path.getmtime(active_file)
+
+with st.spinner('🤖 Loading AI Brain...'):
+    model, train_size, status = load_and_train_model(active_file, file_mtime)
+
+if model is None:
+    st.error(f"Model training failed! Error: {status}")
+    st.stop()
+
+st.sidebar.markdown("---")
+st.sidebar.metric("🧠 AI Memory Capacity", f"{train_size} units trained")
+
+# ==========================================
+# 5. Main Interface: Tabs (Single & Batch)
+# ==========================================
+st.title("💡 Hip to GTK Calibration AI Predictor (V3.2)")
+st.markdown("### 🛡️ Robust Edition: Multi-Sheet Auto Scan & Persistent Training")
+st.divider()
+
+tab1, tab2 = st.tabs(["✍️ Single Prediction", "📁 Batch Prediction (File Upload)"])
+
+# --- TAB 1: Single Prediction ---
+with tab1:
+    st.subheader("Enter Single Hip Test Data")
+    col1, col2, col3, col4 = st.columns(4)
+    with col1: lv_r = st.number_input("lv-R", value=200.0, step=1.0)
+    with col2: lv_g = st.number_input("lv-G", value=390.0, step=1.0)
+    with col3: lv_b = st.number_input("lv-B", value=160.0, step=1.0)
+    with col4: lv_w = st.number_input("lv-W", value=290.0, step=1.0)
+    
+    if st.button("🚀 Predict Single GTK Value"):
+        input_raw = pd.DataFrame({'lv-R': [lv_r], 'lv-G': [lv_g], 'lv-B': [lv_b], 'lv-W': [lv_w]})
+        try:
+            X_input, _ = engineer_features(input_raw)
+            pred = model.predict(X_input)[0]
+            
+            st.subheader("🤖 AI Predicted GTK Currents (uA):")
+            res_col1, res_col2, res_col3, res_col4 = st.columns(4)
+            res_col1.metric("mix_W_2000_r", f"{pred[0]:.1f}")
+            res_col2.metric("mix_W_2000_g", f"{pred[1]:.1f}")
+            res_col3.metric("mix_W_2000_b", f"{pred[2]:.1f}")
+            res_col4.metric("w_4000_current", f"{pred[3]:.1f}")
+        except Exception as e:
+            st.error(f"Prediction Error: {e}")
+
+# --- TAB 2: Batch Prediction ---
 def smart_read_file(uploaded_file):
     if uploaded_file.name.endswith('.csv'):
         return pd.read_csv(uploaded_file, low_memory=False)
     
-    # 如果是 Excel，遍历所有 Sheet 寻找包含亮度数据的表
     xls = pd.ExcelFile(uploaded_file)
     possible_r_names = ['lv-R', 'RValue', 'R_Value', 'LightRed_lv', 'lv_R']
     
     for sheet_name in xls.sheet_names:
         df = pd.read_excel(xls, sheet_name=sheet_name)
         if any(col in df.columns for col in possible_r_names):
-            st.toast(f"✅ 在工作表 '{sheet_name}' 中自动找到了测试数据！")
+            st.toast(f"✅ Auto-locked on sheet: '{sheet_name}'")
             return df
             
-        # 尝试跳过第一行（合并单元格情况）
         df_offset = pd.read_excel(xls, sheet_name=sheet_name, header=1)
         if any(col in df_offset.columns for col in possible_r_names):
-            st.toast(f"✅ 在工作表 '{sheet_name}' (跳过首行) 中找到了测试数据！")
+            st.toast(f"✅ Auto-locked on sheet: '{sheet_name}' (Skipped title row)")
             return df_offset
             
-    raise ValueError("❌ 在所有工作表中都找不到前框亮度数据 (如 lv-R, RValue等)。")
+    raise ValueError("❌ No valid brightness data (e.g., lv-R) found in any sheet.")
 
-# ==========================================
-# 5. 批量预测逻辑
-# ==========================================
-st.subheader("📁 Batch Prediction (Upload Foxconn / Raw Data)")
-uploaded_file = st.file_uploader("Upload CSV or Excel (Any format/Multiple sheets)", type=['csv', 'xlsx'])
+with tab2:
+    st.subheader("Upload Data for Batch Prediction")
+    uploaded_test = st.file_uploader("Upload Test Data (Foxconn Multi-sheet Excel or CSV)", type=['csv', 'xlsx'])
 
-if uploaded_file:
-    try:
-        raw_df = smart_read_file(uploaded_file)
-        
-        if st.button("🚀 Run Smart AI Prediction"):
-            with st.spinner('AI is cleaning data and predicting...'):
-                
-                # 1. 特征工程与脏数据过滤
-                X_feat, valid_mask = engineer_features(raw_df)
-                
-                # 过滤出干净的原始数据行
-                clean_raw_df = raw_df[valid_mask].copy()
-                
-                # 2. AI 预测
-                preds = model.predict(X_feat)
-                
-                # 3. 智能提取 SN 信息 (支持 Foxconn 的双 SN 格式)
-                sn_candidates = ['SerialNumber', 'SN', 'Hip SN', 'FF SN', 'Serial Number']
-                fatp_candidates = ['FATP Assembly SN', 'AssySn', 'GTK SN']
-                
-                ff_sn_col = next((c for c in sn_candidates if c in clean_raw_df.columns), None)
-                fatp_sn_col = next((c for c in fatp_candidates if c in clean_raw_df.columns), None)
-                
-                # 构建输出
-                output_dict = {
-                    'FF SN (前框)': clean_raw_df[ff_sn_col].values if ff_sn_col else ['Unknown'] * len(clean_raw_df),
-                    'FATP SN (整机)': clean_raw_df[fatp_sn_col].values if fatp_sn_col else [''] * len(clean_raw_df),
-                    '🎯 predict_w_4000': np.round(preds[:, 3], 1),
-                    'predict_mix_W_r': np.round(preds[:, 0], 1),
-                    'predict_mix_W_g': np.round(preds[:, 1], 1),
-                    'predict_mix_W_b': np.round(preds[:, 2], 1),
-                    'lv-R (Raw)': X_feat['lv-R'].values,
-                    'lv-G (Raw)': X_feat['lv-G'].values,
-                    'lv-B (Raw)': X_feat['lv-B'].values,
-                    'lv-W (Raw)': X_feat['lv-W'].values
-                }
-                
-                out_df = pd.DataFrame(output_dict)
-                
-                st.success(f"✅ 成功清洗并预测了 {len(out_df)} 台机器的数据！（已自动过滤 Upper/Lower Limit 等脏数据）")
-                st.dataframe(out_df.head(15))
+    if uploaded_test:
+        try:
+            raw_df = smart_read_file(uploaded_test)
+            
+            if st.button("🚀 Start Batch Prediction"):
+                with st.spinner('AI is cleaning data and predicting...'):
+                    
+                    X_feat, valid_mask = engineer_features(raw_df)
+                    clean_raw_df = raw_df[valid_mask].copy()
+                    
+                    preds = model.predict(X_feat)
+                    
+                    sn_candidates = ['SerialNumber', 'SN', 'Hip SN', 'FF SN', 'Serial Number']
+                    fatp_candidates = ['FATP Assembly SN', 'AssySn', 'GTK SN']
+                    ff_sn_col = next((c for c in sn_candidates if c in clean_raw_df.columns), None)
+                    fatp_sn_col = next((c for c in fatp_candidates if c in clean_raw_df.columns), None)
+                    
+                    output_dict = {
+                        'FF SN': clean_raw_df[ff_sn_col].values if ff_sn_col else ['Unknown'] * len(clean_raw_df),
+                        'FATP SN': clean_raw_df[fatp_sn_col].values if fatp_sn_col else [''] * len(clean_raw_df),
+                        '🎯 predict_w_4000': np.round(preds[:, 3], 1),
+                        'predict_mix_W_r': np.round(preds[:, 0], 1),
+                        'predict_mix_W_g': np.round(preds[:, 1], 1),
+                        'predict_mix_W_b': np.round(preds[:, 2], 1),
+                        'lv-R (Raw)': X_feat['lv-R'].values,
+                        'lv-G (Raw)': X_feat['lv-G'].values,
+                        'lv-B (Raw)': X_feat['lv-B'].values,
+                        'lv-W (Raw)': X_feat['lv-W'].values
+                    }
+                    
+                    out_df = pd.DataFrame(output_dict)
+                    
+                    st.success(f"✅ Prediction complete! Processed {len(out_df)} units. (Dirty data & Upper Limits filtered out)")
+                    st.dataframe(out_df.head(15))
 
-                # 4. 导出为 Excel
-                excel_out = io.BytesIO()
-                out_df.to_excel(excel_out, index=False)
-                st.download_button(
-                    label="📥 Download Clean Prediction Results.xlsx",
-                    data=excel_out.getvalue(),
-                    file_name="AI_Robust_Prediction.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
+                    excel_out = io.BytesIO()
+                    out_df.to_excel(excel_out, index=False)
+                    st.download_button(
+                        label="📥 Download Clean Prediction Results (Excel)",
+                        data=excel_out.getvalue(),
+                        file_name="AI_Robust_Prediction.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
 
-    except Exception as e:
-        st.error(f"❌ 解析失败: {e}")
+        except Exception as e:
+            st.error(f"❌ Data Parsing Error: {e}")
